@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: eks-gitops-demo-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: eks-gitops-demo-app
+  template:
+    metadata:
+      labels:
+        app: eks-gitops-demo-app
+    spec:
+      containers:
+        - name: eks-gitops-demo-app
+          image: [AWSアカウントId].dkr.ecr.ap-northeast-1.amazonaws.com/eks-gitops-demo-app:latest
+          ports:
+            - name: http
+              containerPort: 80

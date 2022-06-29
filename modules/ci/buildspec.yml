@@ -1,0 +1,54 @@
+version: 0.2
+
+env:
+  variables:
+    DOCKER_BUILDKIT: "1"
+    DEPLOY_FILE: "deployment.yaml"
+  git-credential-helper: yes
+phases:
+  install:
+    runtime-versions:
+      docker: 19
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - aws --version
+      - docker version
+      - echo ${AWS_DEFAULT_REGION}
+      - $(aws ecr get-login --region ${AWS_DEFAULT_REGION} --no-include-email)
+      - IMAGE_REPOSITORY_URI=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${IMAGE_REPO_NAME}
+      - COMMIT_HASH=$(echo ${CODEBUILD_RESOLVED_SOURCE_VERSION} | cut -c 1-7)
+      - IMAGE_TAG=${COMMIT_HASH:=latest}
+  build:
+    commands:
+      - echo Build started on `date`
+      - echo Building the Docker image...
+      - docker build -t ${IMAGE_REPOSITORY_URI}:latest .
+      - docker tag ${IMAGE_REPOSITORY_URI}:latest ${IMAGE_REPOSITORY_URI}:${IMAGE_TAG}
+      - echo Build completed on `date`
+  post_build:
+    commands:
+      - docker push ${IMAGE_REPOSITORY_URI}:latest
+      - docker push ${IMAGE_REPOSITORY_URI}:${IMAGE_TAG}
+      - INFRA_REPOSITORY_URI=https://git-codecommit.${AWS_DEFAULT_REGION}.amazonaws.com/v1/repos/${INFRA_REPO_NAME}
+      - git config --global user.email "codebuild@example.com"
+      - git config --global user.name "codebuild"
+      - git clone -q ${INFRA_REPOSITORY_URI}
+      - cd ${INFRA_REPO_NAME}
+      - git branch -a
+      - NEW_BRANCH_NAME="codebuild/${IMAGE_REPO_NAME}/${COMMIT_HASH}"
+      - git checkout -b ${NEW_BRANCH_NAME}
+      - |
+        sed -i -e "s/\(${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com\/[^:]*:\)[a-z0-9_-]*/\1${COMMIT_HASH}/g" ${DEPLOY_FILE}
+      - git add .
+      - COMMIT_MSG="Replace ${IMAGE_REPO_NAME} image tag to ${COMMIT_HASH}."
+      - git commit -m "${COMMIT_MSG}"
+      - git push -u origin ${NEW_BRANCH_NAME}
+      - PR_TITLE="[IMAGE DEPLOY REQUEST] ${NEW_BRANCH_NAME}"
+      - PR_MSG="Replace ${IMAGE_REPO_NAME} image tag to ${COMMIT_HASH}."
+      - |
+        aws codecommit create-pull-request \
+          --title "${PR_TITLE}" \
+          --description "${PR_MSG}" \
+          --targets "repositoryName=${INFRA_REPO_NAME},sourceReference=${NEW_BRANCH_NAME},destinationReference=master" \
+          --query 'pullRequest.pullRequestId' --output text
